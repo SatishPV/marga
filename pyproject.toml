@@ -1,0 +1,50 @@
+[project]
+name = "marga"
+version = "0.1.0"
+description = "A no-migration data catalog: discover, track lineage, flag data health, and query CSV/JSON sources through SQL — without copying your data."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.0",
+    "duckdb>=1.0",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.0",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "mypy>=1.9",
+    "pip-audit>=2.7",
+]
+
+[project.scripts]
+marga = "marga.cli:main"
+
+# Third-party adapters register here, e.g. in an external package's
+# own pyproject.toml:
+#   [project.entry-points."marga.sources"]
+#   my_source = "my_package.my_adapter"
+# See marga/sources/registry.py: load_entry_point_adapters()
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["marga*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

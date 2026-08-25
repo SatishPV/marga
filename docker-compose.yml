@@ -1,0 +1,22 @@
+version: "3.9"
+
+# Runs Marga itself in a container — for testing the packaged app the
+# way a user who clones the repo would run it, not for spinning up
+# external data sources (that compose file was removed with the v2
+# roadmap trim; it'll come back when live DB/NoSQL adapters exist).
+
+services:
+  marga:
+    build: .
+    container_name: marga
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount your own data in read-only, so you can point Marga at
+      # real files without rebuilding the image each time.
+      - ./sample_data:/app/sample_data:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>marga — Data Catalog</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.6/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root { --bg: #0f1117; --panel: #171a23; --border: #2a2e3a; --text: #e6e8ec; --muted: #9aa0ac; --accent: #7dd3fc; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: .75rem; }
+  header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+  header .tag { color: var(--muted); font-size: .85rem; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); height: calc(100vh - 62px); }
+  section { background: var(--panel); padding: 1rem; overflow: auto; }
+  section h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 .75rem; }
+  #graph { height: 320px; border: 1px solid var(--border); border-radius: 8px; }
+  .controls { display: flex; gap: .5rem; margin-bottom: 1rem; }
+  input[type=text] { flex: 1; background: #0d0f16; border: 1px solid var(--border); color: var(--text); padding: .5rem .7rem; border-radius: 6px; font-size: .85rem; }
+  button { background: var(--accent); color: #0f1117; border: none; padding: .5rem .9rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: .85rem; }
+  button:hover { opacity: .9; }
+  pre { background: #0d0f16; border: 1px solid var(--border); border-radius: 6px; padding: .75rem; font-size: .8rem; overflow: auto; max-height: 220px; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .badge { display: inline-block; padding: .1rem .5rem; border-radius: 10px; font-size: .7rem; margin-right: .3rem; }
+  .badge.confidence { background: rgba(125,211,252,.15); color: var(--accent); }
+  .badge.rot { background: rgba(248,113,113,.15); color: #f87171; }
+  textarea { width: 100%; height: 70px; background: #0d0f16; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: .5rem; font-family: monospace; font-size: .82rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🪶 marga</h1>
+  <span class="tag">no-migration data catalog</span>
+</header>
+
+<main>
+  <section>
+    <h2>Sources</h2>
+    <div class="controls">
+      <input id="files" type="text" value="sample_data/customers.csv,sample_data/orders.csv">
+      <button onclick="loadAll()">Scan</button>
+    </div>
+    <div id="graph"></div>
+    <h2 style="margin-top:1rem">Catalog</h2>
+    <pre id="catalogOut">Click Scan to profile your sources.</pre>
+  </section>
+
+  <section>
+    <h2>Vitals (Redundant / Obsolete / Trivial)</h2>
+    <pre id="vitalsOut">—</pre>
+
+    <h2 style="margin-top:1rem">Query (SQL lens, no migration)</h2>
+    <textarea id="sqlBox">SELECT c.name, c.city, o.order_id, o.amount
+FROM customers c JOIN orders o ON c.id = o.customer_id
+ORDER BY c.name</textarea>
+    <div class="controls" style="margin-top:.5rem">
+      <button onclick="runQuery()">Run query</button>
+    </div>
+    <table id="resultTable"></table>
+  </section>
+</main>
+
+<script>
+const API = "";
+
+async function loadAll() {
+  const files = document.getElementById('files').value;
+  const catalog = await (await fetch(`${API}/catalog?files=${encodeURIComponent(files)}`)).json();
+  document.getElementById('catalogOut').textContent = JSON.stringify(catalog, null, 2);
+  renderGraph(catalog);
+
+  const vitals = await (await fetch(`${API}/vitals?files=${encodeURIComponent(files)}`)).json();
+  document.getElementById('vitalsOut').textContent = JSON.stringify(vitals, null, 2);
+}
+
+function renderGraph(catalog) {
+  const nodes = catalog.files.map((f, i) => ({ id: f.source, label: f.source.split('/').pop() }));
+  const edges = catalog.relationships.map(r => ({
+    from: r.from.split('.').slice(0, -1).join('.'),
+    to: r.to.split('.').slice(0, -1).join('.'),
+    label: `${r.confidence * 100}%`,
+    arrows: 'to',
+    color: { color: '#7dd3fc' },
+    font: { color: '#9aa0ac', size: 11 }
+  }));
+  const container = document.getElementById('graph');
+  new vis.Network(container, { nodes, edges }, {
+    nodes: { shape: 'box', color: { background: '#1f2330', border: '#7dd3fc' }, font: { color: '#e6e8ec' } },
+    edges: { smooth: true },
+    physics: { stabilization: true }
+  });
+}
+
+async function runQuery() {
+  const sql = document.getElementById('sqlBox').value;
+  const files = document.getElementById('files').value.split(',');
+  const bindings = {};
+  files.forEach(f => { bindings[f.split('/').pop().replace('.csv', '').replace('.json', '')] = f; });
+
+  const res = await (await fetch(`${API}/query`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql, file_bindings: bindings })
+  })).json();
+
+  const table = document.getElementById('resultTable');
+  if (!res.rows || !res.rows.length) { table.innerHTML = '<tr><td>No rows</td></tr>'; return; }
+  const cols = res.columns;
+  table.innerHTML = `<tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>` +
+    res.rows.map(r => `<tr>${cols.map(c => `<td>${r[c]}</td>`).join('')}</tr>`).join('');
+}
+
+loadAll();
+</script>
+
+</body>
+</html>
