@@ -26,6 +26,7 @@
   .badge { display: inline-block; padding: .1rem .5rem; border-radius: 10px; font-size: .7rem; margin-right: .3rem; }
   .badge.confidence { background: rgba(125,211,252,.15); color: var(--accent); }
   .badge.rot { background: rgba(248,113,113,.15); color: #f87171; }
+  .ts { color: var(--muted); font-size: .8rem; }
   textarea { width: 100%; height: 70px; background: #0d0f16; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: .5rem; font-family: monospace; font-size: .82rem; }
 </style>
 </head>
@@ -40,21 +41,33 @@
   <section>
     <h2>Sources</h2>
     <div class="controls">
-      <input id="files" type="text" value="sample_data/customers.csv,sample_data/orders.csv">
+      <input id="files" type="text" value="sample_data/customers.csv,sample_data/orders.csv,sample_data/products.csv,sample_data/order_items.csv,sample_data/employees.csv,postgres://public.customers,postgres://public.orders,mongodb://customers,mongodb://orders,elasticsearch://customers,elasticsearch://orders">
       <button onclick="loadAll()">Scan</button>
     </div>
+    <div class="ts" style="margin-bottom:.75rem">Mixes local files with live sources (postgres://, mongodb://, elasticsearch://) in one scan. Live sources need credentials set as environment variables on the server — see README.</div>
     <div id="graph"></div>
+    <div class="ts" style="margin-top:.4rem">
+      <span class="badge" style="border:1px solid #7dd3fc;color:#7dd3fc">file</span>
+      <span class="badge" style="border:1px solid #a78bfa;color:#a78bfa">postgres</span>
+      <span class="badge" style="border:1px solid #34d399;color:#34d399">mongodb</span>
+      <span class="badge" style="border:1px solid #fbbf24;color:#fbbf24">elasticsearch</span>
+      — edge label = number of column-level matches between two sources
+    </div>
     <h2 style="margin-top:1rem">Catalog</h2>
-    <pre id="catalogOut">Click Scan to profile your sources.</pre>
+    <div id="catalogOut">Click Scan to profile your sources.</div>
   </section>
 
   <section>
     <h2>Vitals (Redundant / Obsolete / Trivial)</h2>
-    <pre id="vitalsOut">—</pre>
+    <div id="vitalsOut">—</div>
 
     <h2 style="margin-top:1rem">Query (SQL lens, no migration)</h2>
-    <textarea id="sqlBox">SELECT c.name, c.city, o.order_id, o.amount
-FROM customers c JOIN orders o ON c.id = o.customer_id
+    <div class="ts" style="margin-bottom:.5rem">Local files only for now — live sources (postgres://, mongodb://, elasticsearch://) show up in Catalog/Vitals/Lineage above, but aren't queryable here yet.</div>
+    <textarea id="sqlBox">SELECT c.name, o.order_id, oi.quantity, p.product_name
+FROM customers c
+JOIN orders o ON c.id = o.customer_id
+JOIN order_items oi ON o.order_id = oi.order_id
+JOIN products p ON oi.product_id = p.product_id
 ORDER BY c.name</textarea>
     <div class="controls" style="margin-top:.5rem">
       <button onclick="runQuery()">Run query</button>
@@ -69,36 +82,134 @@ const API = "";
 async function loadAll() {
   const files = document.getElementById('files').value;
   const catalog = await (await fetch(`${API}/catalog?files=${encodeURIComponent(files)}`)).json();
-  document.getElementById('catalogOut').textContent = JSON.stringify(catalog, null, 2);
+  renderCatalog(catalog);
   renderGraph(catalog);
 
   const vitals = await (await fetch(`${API}/vitals?files=${encodeURIComponent(files)}`)).json();
-  document.getElementById('vitalsOut').textContent = JSON.stringify(vitals, null, 2);
+  renderVitals(vitals);
 }
 
+function renderCatalog(catalog) {
+  const container = document.getElementById('catalogOut');
+  container.innerHTML = catalog.files.map(f => `
+    <div style="margin-bottom:1rem">
+      <div style="font-weight:600;margin-bottom:.4rem">${f.source.split('/').pop()} <span class="ts">(${f.row_count} rows)</span></div>
+      <table>
+        <tr><th>column</th><th>type</th><th>null %</th><th>distinct</th></tr>
+        ${f.columns.map(c => `<tr><td>${c.name}</td><td>${c.dtype}</td><td>${c.null_pct}%</td><td>${c.distinct_count}</td></tr>`).join('')}
+      </table>
+    </div>
+  `).join('') + (catalog.relationships.length ? `
+    <div style="margin-top:1rem">
+      <div style="font-weight:600;margin-bottom:.4rem">Detected relationships</div>
+      <table>
+        <tr><th>from</th><th>to</th><th>confidence</th></tr>
+        ${catalog.relationships.map(r => `<tr><td>${r.from}</td><td>${r.to}</td><td><span class="badge confidence">${Math.round(r.confidence*100)}%</span></td></tr>`).join('')}
+      </table>
+    </div>
+  ` : '<div class="ts">No relationships detected across these sources.</div>');
+}
+
+function renderVitals(vitals) {
+  const container = document.getElementById('vitalsOut');
+  const trivialRows = Object.entries(vitals.trivial)
+    .flatMap(([source, flags]) => flags.map(f => `<tr><td>${source.split('/').pop()}</td><td>${f.column}</td><td>${f.reason}</td></tr>`));
+  const obsoleteRows = vitals.obsolete
+    .map(o => `<tr><td>${o.source.split('/').pop()}</td><td>${o.obsolete_candidate ? '⚠️ yes' : 'no'}</td><td>${o.runs_observed}</td></tr>`);
+  const redundantRows = vitals.redundant
+    .map(r => `<tr><td>${r.columns.join(' ↔ ')}</td><td><span class="badge rot">${Math.round(r.overlap*100)}% overlap</span></td></tr>`);
+
+  container.innerHTML = `
+    <div style="margin-bottom:.75rem">
+      <div style="font-weight:600;margin-bottom:.3rem">Trivial columns</div>
+      ${trivialRows.length ? `<table><tr><th>source</th><th>column</th><th>reason</th></tr>${trivialRows.join('')}</table>` : '<div class="ts">None flagged.</div>'}
+    </div>
+    <div style="margin-bottom:.75rem">
+      <div style="font-weight:600;margin-bottom:.3rem">Obsolete candidates</div>
+      <table><tr><th>source</th><th>obsolete?</th><th>runs observed</th></tr>${obsoleteRows.join('')}</table>
+    </div>
+    <div>
+      <div style="font-weight:600;margin-bottom:.3rem">Cross-source duplicates</div>
+      <div class="ts" style="margin-bottom:.4rem">Same data confirmed in multiple sources — often intentional (e.g. a search index mirroring a database). Informational, not a cleanup signal.</div>
+      ${redundantRows.length ? `<table><tr><th>columns</th><th>overlap</th></tr>${redundantRows.join('')}</table>` : '<div class="ts">None flagged.</div>'}
+    </div>
+  `;
+}
+
+function sourceType(source) {
+  if (source.startsWith('postgres://')) return 'postgres';
+  if (source.startsWith('mongodb://')) return 'mongodb';
+  if (source.startsWith('elasticsearch://')) return 'elasticsearch';
+  return 'file';
+}
+
+function sourceLabel(source) {
+  if (source.includes('://')) {
+    const [, rest] = source.split('://');
+    return rest;
+  }
+  return source.split('/').pop();
+}
+
+const TYPE_COLORS = {
+  file: '#7dd3fc',
+  postgres: '#a78bfa',
+  mongodb: '#34d399',
+  elasticsearch: '#fbbf24'
+};
+
 function renderGraph(catalog) {
-  const nodes = catalog.files.map((f, i) => ({ id: f.source, label: f.source.split('/').pop() }));
-  const edges = catalog.relationships.map(r => ({
-    from: r.from.split('.').slice(0, -1).join('.'),
-    to: r.to.split('.').slice(0, -1).join('.'),
-    label: `${r.confidence * 100}%`,
-    arrows: 'to',
-    color: { color: '#7dd3fc' },
-    font: { color: '#9aa0ac', size: 11 }
+  const nodes = catalog.files.map(f => {
+    const type = sourceType(f.source);
+    return {
+      id: f.source,
+      label: sourceLabel(f.source) + (type !== 'file' ? `\n(${type})` : ''),
+      color: { background: '#1f2330', border: TYPE_COLORS[type] }
+    };
+  });
+
+  // One edge per UNORDERED source pair, not one per column-level match and
+  // not duplicated in both directions — that's what turned this into an
+  // unreadable "flight tracker" web. Individual column matches are still
+  // visible in the Detected relationships table below.
+  const edgeMap = new Map();
+  catalog.relationships.forEach(r => {
+    const fromSource = r.from.split('.').slice(0, -1).join('.');
+    const toSource = r.to.split('.').slice(0, -1).join('.');
+    if (fromSource === toSource) return;
+    const sourceKey = [fromSource, toSource].sort().join('|||');
+    // Dedupe on the actual column pair too — detect_relationships()
+    // reports each match in both directions (A->B and B->A), which
+    // would otherwise double-count "3 shared columns" as "6 links".
+    const columnKey = [r.from, r.to].sort().join('|||');
+    if (!edgeMap.has(sourceKey)) edgeMap.set(sourceKey, { from: fromSource, to: toSource, columns: new Set(), maxConfidence: 0 });
+    const e = edgeMap.get(sourceKey);
+    e.columns.add(columnKey);
+    e.maxConfidence = Math.max(e.maxConfidence, r.confidence);
+  });
+
+  const edges = Array.from(edgeMap.values()).map(e => ({
+    from: e.from,
+    to: e.to,
+    label: `${e.columns.size} link${e.columns.size > 1 ? 's' : ''}`,
+    title: `up to ${Math.round(e.maxConfidence * 100)}% confidence`,
+    color: { color: '#7dd3fc', opacity: 0.4 },
+    font: { color: '#9aa0ac', size: 10, strokeWidth: 0 }
   }));
+
   const container = document.getElementById('graph');
   new vis.Network(container, { nodes, edges }, {
-    nodes: { shape: 'box', color: { background: '#1f2330', border: '#7dd3fc' }, font: { color: '#e6e8ec' } },
-    edges: { smooth: true },
-    physics: { stabilization: true }
+    nodes: { shape: 'box', font: { color: '#e6e8ec', multi: false, align: 'center' } },
+    edges: { smooth: { type: 'continuous' } },
+    physics: { stabilization: true, barnesHut: { springLength: 160, avoidOverlap: 0.5 } }
   });
 }
 
 async function runQuery() {
   const sql = document.getElementById('sqlBox').value;
-  const files = document.getElementById('files').value.split(',');
+  const files = document.getElementById('files').value.split(',').filter(f => !f.includes('://'));
   const bindings = {};
-  files.forEach(f => { bindings[f.split('/').pop().replace('.csv', '').replace('.json', '')] = f; });
+  files.forEach(f => { bindings[f.split('/').pop().replace('.csv', '').replace('.json', '').replace('.parquet', '').replace('.arrow', '')] = f; });
 
   const res = await (await fetch(`${API}/query`, {
     method: 'POST',

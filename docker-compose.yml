@@ -1,9 +1,11 @@
-version: "3.9"
-
-# Runs Marga itself in a container — for testing the packaged app the
-# way a user who clones the repo would run it, not for spinning up
-# external data sources (that compose file was removed with the v2
-# roadmap trim; it'll come back when live DB/NoSQL adapters exist).
+# Marga itself, plus real services to test the Postgres/Mongo/ES adapters
+# against. S3 has no local equivalent here — test that one against a
+# real bucket (or MinIO, if you want a local S3-compatible option; not
+# included by default to keep this file focused).
+#
+# Setup:
+#   cp .env.example .env
+#   docker compose up -d --build
 
 services:
   marga:
@@ -12,11 +14,83 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Mount your own data in read-only, so you can point Marga at
-      # real files without rebuilding the image each time.
       - ./sample_data:/app/sample_data:ro
+    environment:
+      # Container-to-container networking: service names, not
+      # localhost/host-mapped ports — different from .env.host, which
+      # is for running `marga` CLI directly on your machine (see README).
+      MARGA_POSTGRES_HOST: postgres
+      MARGA_POSTGRES_PORT: "5432"
+      MARGA_POSTGRES_DBNAME: ${POSTGRES_DB}
+      MARGA_POSTGRES_USER: ${POSTGRES_USER}
+      MARGA_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MARGA_MONGODB_HOST: mongodb
+      MARGA_MONGODB_PORT: "27017"
+      MARGA_MONGODB_USER: ${MONGO_USER}
+      MARGA_MONGODB_PASSWORD: ${MONGO_PASSWORD}
+      MARGA_MONGODB_DBNAME: ${MONGO_DB}
+      MARGA_ELASTICSEARCH_HOST: "http://elasticsearch:9200"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    container_name: marga-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: marga-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  mongodb:
+    image: mongo:7
+    container_name: marga-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DB}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pg_data:
+  es_data:
+  mongo_data:

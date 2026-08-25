@@ -1,16 +1,23 @@
 """
-Milestone 1: Schema + relationship inference over CSV/JSON files.
-No data is copied — only metadata (schema, stats) is stored in the catalog.
+Schema + relationship inference over any registered source — local
+files (CSV/JSON/Parquet/Arrow) or live sources (Postgres, MongoDB,
+Elasticsearch, S3) via source_router.py. No data is copied — only
+metadata (schema, stats) is stored in the catalog.
 """
 import json
 
-from marga.catalog.lineage import emit_event
-from marga.sources.files.file_source import load_file  # re-exported for backward compatibility
+from marga.catalog.lineage import dataframe_checksum, emit_event
+from marga.catalog.source_router import resolve_dataframe
+from marga.sources.files.file_source import (
+    load_file,  # noqa: F401 — re-exported: cli.py and api/main.py import load_file from here
+)
 
 
-def profile_file(path: str) -> dict:
-    """Produce a catalog entry: schema + basic stats, no raw data retained."""
-    df = load_file(path)
+def profile_file(source: str) -> dict:
+    """Produce a catalog entry: schema + basic stats, no raw data retained.
+    'source' can be a local file path or a live-source string
+    (e.g. 'postgres://public.customers') — see source_router.py."""
+    df = resolve_dataframe(source)
     columns = []
     for col in df.columns:
         series = df[col]
@@ -22,7 +29,7 @@ def profile_file(path: str) -> dict:
             "sample_values": series.dropna().unique()[:5].tolist(),
         })
     return {
-        "source": str(path),
+        "source": str(source),
         "row_count": len(df),
         "columns": columns,
     }
@@ -30,28 +37,27 @@ def profile_file(path: str) -> dict:
 
 def detect_relationships(catalog_entries: list[dict], dataframes: dict) -> list[dict]:
     """
-    Heuristic join detection: for each pair of files, look for column name
-    similarity + value overlap. This is intentionally simple for v1 —
-    confidence score reflects how naive it is.
+    Heuristic join detection: for each pair of sources, look for column
+    name similarity + value overlap. This is intentionally simple for
+    v1 — confidence score reflects how naive it is.
     """
     relationships = []
-    files = list(catalog_entries)
-    for i in range(len(files)):
-        for j in range(len(files)):
+    sources = list(catalog_entries)
+    for i in range(len(sources)):
+        for j in range(len(sources)):
             if i == j:
                 continue
-            src, tgt = files[i], files[j]
+            src, tgt = sources[i], sources[j]
             src_df = dataframes[src["source"]]
             tgt_df = dataframes[tgt["source"]]
             for col in src["columns"]:
                 col_name = col["name"].lower()
-                # heuristic: column like "x_id" or "id" referencing another file's "id"/"x"
+                # heuristic: column like "x_id" or "id" referencing another source's "id"/"x"
                 for tcol in tgt["columns"]:
                     tcol_name = tcol["name"].lower()
                     name_match = (
                         col_name == tcol_name
                         or col_name.replace("_id", "") in tgt["source"].lower()
-                        or (tcol_name == "id" and col_name.endswith("_id"))
                     )
                     if not name_match:
                         continue
@@ -75,18 +81,21 @@ def detect_relationships(catalog_entries: list[dict], dataframes: dict) -> list[
     return relationships
 
 
-def build_catalog(file_paths: list[str]) -> dict:
-    dataframes = {p: load_file(p) for p in file_paths}
-    entries = [profile_file(p) for p in file_paths]
+def build_catalog(sources: list[str]) -> dict:
+    """sources: mix of local file paths and/or live-source strings
+    (e.g. 'sample_data/orders.csv', 'postgres://public.customers')."""
+    dataframes = {s: resolve_dataframe(s) for s in sources}
+    entries = [profile_file(s) for s in sources]
     entries_by_source = {e["source"]: e for e in entries}
     relationships = detect_relationships(list(entries_by_source.values()), dataframes)
 
-    # Record lineage: this catalog-build job read these source files and
-    # produced this catalog snapshot — the "where did it come from, how"
-    # answer, queryable later per file.
+    # Record lineage: this catalog-build job read these sources and
+    # produced this catalog snapshot. Checksum is computed from the
+    # already-loaded data (works uniformly for files and live sources —
+    # see lineage.dataframe_checksum) rather than re-reading anything.
     emit_event(
         job_name="build_catalog",
-        inputs=file_paths,
+        inputs=[{"name": s, "checksum": dataframe_checksum(dataframes[s])} for s in sources],
         outputs=["catalog_snapshot"],
     )
 

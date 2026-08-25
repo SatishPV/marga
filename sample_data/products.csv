@@ -1,0 +1,6 @@
+product_id,product_name,category,price,in_stock
+1,Wireless Mouse,Electronics,25.99,true
+2,Standing Desk,Furniture,349.00,true
+3,USB-C Cable,Electronics,12.50,false
+4,Office Chair,Furniture,189.99,true
+5,Wireless Mouse,Electronics,25.99,true

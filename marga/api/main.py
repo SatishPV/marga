@@ -12,7 +12,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from marga.catalog import vitals as vitals_module
-from marga.catalog.profiler import build_catalog, load_file
+from marga.catalog.profiler import build_catalog
+from marga.catalog.source_router import resolve_dataframe
 from marga.federation.sql_lens import query as sql_query
 
 app = FastAPI(title="Marga", description="No-migration data catalog and query layer")
@@ -37,7 +38,7 @@ def get_catalog(files: str):
 def get_vitals(files: str):
     paths = files.split(",")
     catalog = build_catalog(paths)
-    dataframes = {p: load_file(p) for p in paths}
+    dataframes = {p: resolve_dataframe(p) for p in paths}
     return {
         "trivial": {e["source"]: vitals_module.trivial_columns(e) for e in catalog["files"]},
         "obsolete": [vitals_module.obsolete_check(p) for p in paths],

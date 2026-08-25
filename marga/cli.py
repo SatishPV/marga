@@ -5,13 +5,25 @@ Usage:
     marga scan file1.csv file2.csv        # profile + relationships + lineage
     marga vitals file1.csv file2.csv      # data health check (redundant/obsolete/trivial)
     marga serve                           # start API + UI on :8000
+
+For live sources (postgres://, mongodb://, elasticsearch://), credentials
+are read from environment variables. If a .env.host file exists in the
+current directory, it's loaded automatically — no manual `source` needed.
+This has NO effect inside Docker/Kubernetes, where the runtime injects
+environment variables directly (there's no .env.host file to find, and
+none is needed — see docker-compose.yml).
 """
 import argparse
 import json
 import sys
 
+from dotenv import load_dotenv
+
+load_dotenv(".env.host")  # silently does nothing if the file isn't present
+
 from marga.catalog import vitals as vitals_module
-from marga.catalog.profiler import build_catalog, load_file
+from marga.catalog.profiler import build_catalog
+from marga.catalog.source_router import resolve_dataframe
 
 
 def cmd_scan(args):
@@ -21,7 +33,7 @@ def cmd_scan(args):
 
 def cmd_vitals(args):
     catalog = build_catalog(args.files)
-    dataframes = {p: load_file(p) for p in args.files}
+    dataframes = {p: resolve_dataframe(p) for p in args.files}
     result = {
         "trivial": {e["source"]: vitals_module.trivial_columns(e) for e in catalog["files"]},
         "obsolete": [vitals_module.obsolete_check(p) for p in args.files],

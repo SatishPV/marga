@@ -45,9 +45,19 @@ def obsolete_check(source_path: str, stale_after_runs: int = 5) -> dict:
 
 
 def redundant_columns(catalog_entries: list[dict], dataframes: dict, overlap_threshold: float = 0.9) -> list[dict]:
-    """Flag column pairs (across different files) that look like duplicated
-    data rather than a legitimate join key — same values, but NOT an
-    obvious id/foreign-key relationship."""
+    """
+    Flag column pairs (across different sources) with matching values.
+
+    Honest framing: this checks VALUE overlap, so it's already data-driven,
+    not just name-matching — but "redundant" is the wrong word for what it
+    usually finds. When sources are genuinely different systems (a CSV, a
+    Postgres table, an Elasticsearch index all holding the same entity),
+    a match here is normal, intentional replication — not waste. True
+    redundancy (accidental duplication worth cleaning up) is a same-system
+    question this function doesn't distinguish yet. Treat this as
+    "cross-source duplicate detected" (informational), not a cleanup
+    recommendation — see the UI's "Cross-source duplicates" label.
+    """
     flags = []
     for i, src in enumerate(catalog_entries):
         for tgt in catalog_entries[i + 1:]:

@@ -5,6 +5,13 @@ We're not running Marquez — just emitting compatible JSON events to a local
 log, so this could point at a real OpenLineage backend later with no rework.
 
 Each event answers: what job ran, what did it read, what did it produce, when.
+
+Checksums are computed from the PROFILED DATA itself (a hash of the
+DataFrame's contents), not raw file bytes — this is what lets lineage
+work uniformly across local files AND live sources (Postgres, MongoDB,
+Elasticsearch, S3), which have no "file bytes" to read directly. It's
+also a more accurate signal for files too: it changes if and only if
+the actual data changes, not incidental things like file metadata.
 """
 import hashlib
 import json
@@ -12,18 +19,24 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
+
 LINEAGE_LOG = Path(__file__).parent / "lineage_events.jsonl"
 
 
-def _file_checksum(path: str) -> str:
-    """Cheap content fingerprint — lets us detect if a source file changed
-    between runs without storing the file itself."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()[:16]
+def dataframe_checksum(df: pd.DataFrame) -> str:
+    """Content fingerprint of a DataFrame — same data in, same checksum
+    out, regardless of which source it came from."""
+    row_hashes = pd.util.hash_pandas_object(df, index=True).values
+    return hashlib.sha256(row_hashes.tobytes()).hexdigest()[:16]
 
 
-def emit_event(job_name: str, inputs: list[str], outputs: list[str], event_type: str = "COMPLETE") -> dict:
+def emit_event(job_name: str, inputs: list[dict], outputs: list[str], event_type: str = "COMPLETE") -> dict:
     """
-    inputs: source file paths this job read
+    inputs: list of {"name": source identifier, "checksum": content hash}
+        — the caller computes the checksum (via dataframe_checksum) since
+        only the caller has already loaded the data; this module doesn't
+        re-read anything.
     outputs: catalog entries / query results this job produced
     event_type: START | COMPLETE | FAIL (OpenLineage convention)
     """
@@ -33,8 +46,8 @@ def emit_event(job_name: str, inputs: list[str], outputs: list[str], event_type:
         "run": {"runId": str(uuid.uuid4())},
         "job": {"name": job_name},
         "inputs": [
-            {"name": p, "namespace": "file", "facets": {"checksum": _file_checksum(p)}}
-            for p in inputs
+            {"name": i["name"], "namespace": "source", "facets": {"checksum": i["checksum"]}}
+            for i in inputs
         ],
         "outputs": [{"name": o, "namespace": "catalog"} for o in outputs],
     }
@@ -43,8 +56,8 @@ def emit_event(job_name: str, inputs: list[str], outputs: list[str], event_type:
     return event
 
 
-def history_for(source_path: str) -> list[dict]:
-    """Every recorded event that touched this source file — the 'where did
+def history_for(source_name: str) -> list[dict]:
+    """Every recorded event that touched this source — the 'where did
     this come from and how' answer."""
     if not LINEAGE_LOG.exists():
         return []
@@ -52,7 +65,7 @@ def history_for(source_path: str) -> list[dict]:
     with open(LINEAGE_LOG) as f:
         for line in f:
             event = json.loads(line)
-            if any(i["name"] == source_path for i in event["inputs"]):
+            if any(i["name"] == source_name for i in event["inputs"]):
                 events.append(event)
     return events
 
@@ -63,4 +76,4 @@ if __name__ == "__main__":
         for e in history_for(sys.argv[2]):
             print(json.dumps(e, indent=2))
     else:
-        print("Usage: python lineage.py history <file_path>")
+        print("Usage: python lineage.py history <source_name>")

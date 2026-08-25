@@ -22,6 +22,51 @@ ever copied or migrated; every query runs against your original data.
 - **Web UI + CLI** — browse the catalog, see the relationship graph, run
   queries
 
+## Sources supported
+
+| Source | Status | How |
+|---|---|---|
+| CSV, JSON, Parquet, Arrow (files) | ✅ Implemented, tested | pandas/pyarrow, no credentials |
+| Postgres | ✅ Implemented, **wired into catalog + live-tested** | DuckDB `postgres_scanner`, read-only attach |
+| MongoDB | ✅ Implemented, **wired into catalog + live-tested** | `pymongo` |
+| Elasticsearch | ✅ Implemented, **wired into catalog + live-tested** | `elasticsearch-py` (pin `<9` to match ES 8.x server) |
+| S3 (object storage) | ⚠️ Adapter implemented, **not live-tested** | DuckDB `httpfs` extension |
+
+**`marga scan` now works against live sources, not just files.** Use a
+`scheme://entity` string instead of a file path.
+
+Credentials are managed via `.env` files (never committed — see
+`.gitignore`), following the pattern `MARGA_<SOURCE>_<FIELD>`:
+
+```bash
+# For running marga CLI directly on your machine (uses localhost + mapped ports):
+cp .env.host.example .env.host
+# no manual `source` needed — marga auto-loads .env.host on every command
+
+marga scan postgres://public.customers postgres://public.orders
+# or mix live and local sources in one scan:
+marga scan sample_data/customers.csv postgres://public.orders
+```
+
+See `marga/catalog/source_router.py` for the exact field names per
+source. Credentials are never logged or written to the catalog/lineage
+log. Seed MongoDB and Elasticsearch with matching demo data via
+`python3 docker/seed/seed_mongo.py` and `python3 docker/seed/seed_es.py`
+(after `.env.host` exists — the seed scripts auto-load it the same way).
+
+**On Docker/Kubernetes:** the code only ever reads `os.environ` — it has
+no idea whether a value came from `.env.host`, a shell export, a Docker
+Compose `environment:` block, or a Kubernetes `Secret`/`ConfigMap` via
+`envFrom`. `.env`/`.env.host` are local-development conveniences only;
+in Docker (see `docker-compose.yml`) or Kubernetes, the runtime injects
+environment variables directly and `python-dotenv`'s auto-load is a
+no-op (no `.env.host` file exists in those environments, and none is
+needed).
+
+`pytest tests/integration/ -v` runs the live adapter tests (auto-skipped
+if a service isn't reachable, with the actual connection error shown in
+the skip reason if it fails).
+
 ## Quickstart
 
 ```bash
@@ -35,9 +80,17 @@ marga serve   # web UI + API at http://localhost:8000
 ## Run with Docker
 
 ```bash
-docker compose up --build
+cp .env.example .env
+docker compose up -d --build
 # API + UI at http://localhost:8000
 ```
+
+`.env` supplies credentials for the Postgres/MongoDB containers AND
+tells the `marga` app container how to reach them — the app container
+uses Docker's internal network (service names like `postgres`, not
+`localhost`), which is different from `.env.host` used for running the
+CLI on your own machine. Both are gitignored; only the `.example`
+versions are committed.
 
 The container mounts `sample_data/` read-only — drop your own CSV/JSON
 files there (or edit the volume mount in `docker-compose.yml`) to test
@@ -72,12 +125,14 @@ implementation.
 
 ## What's not here (by design, for now)
 
-This is a focused v1: CSV/JSON files, SQL queries, local single-user use.
-Live database connections, NoSQL, graph queries, object storage, and a
-natural-language query layer are real directions but deliberately not
-part of this release — see `docs/PROJECT_BRIEF.md` for the reasoning.
-They'll come as their own tested milestones, not as unfinished code
-sitting in this repo.
+Live database *query federation* (joining a Postgres table into the
+same SQL query as a CSV file), a real graph query engine, NiFi
+orchestration for SaaS sources (Salesforce/SharePoint/SAP), PII
+flagging, and natural-language queries are real directions but
+deliberately not part of this release. Source *adapters* for
+Postgres/Mongo/ES/S3 exist (see table above) — what's not built yet is
+wiring them into the catalog/vitals/query pipeline the way CSV/JSON
+files already are.
 
 ## Contributing
 
