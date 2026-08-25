@@ -3,8 +3,7 @@ Milestone 1: Schema + relationship inference over CSV/JSON files.
 No data is copied — only metadata (schema, stats) is stored in the catalog.
 """
 import json
-import pandas as pd
-from pathlib import Path
+
 from marga.catalog.lineage import emit_event
 from marga.sources.files.file_source import load_file  # re-exported for backward compatibility
 
@@ -62,7 +61,10 @@ def detect_relationships(catalog_entries: list[dict], dataframes: dict) -> list[
                         if not src_vals or not tgt_vals:
                             continue
                         overlap = len(src_vals & tgt_vals) / len(src_vals)
-                    except Exception:
+                    except (KeyError, TypeError, ZeroDivisionError):
+                        # KeyError: column missing after a schema mismatch;
+                        # TypeError: unhashable column values (can't build a set);
+                        # ZeroDivisionError: src_vals ended up empty despite the check above.
                         continue
                     if overlap > 0.5:
                         relationships.append({

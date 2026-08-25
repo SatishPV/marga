@@ -4,9 +4,10 @@ Nothing is migrated or copied into a database — DuckDB reads the files
 in place for each query.
 """
 import duckdb
+import pandas as pd
 
 
-def query(sql: str, file_bindings: dict[str, str]) -> duckdb.DuckDBPyRelation:
+def query(sql: str, file_bindings: dict[str, str]) -> pd.DataFrame:
     """
     file_bindings maps a view name -> file path, e.g.
     {"customers": "sample_data/customers.csv", "orders": "sample_data/orders.csv"}

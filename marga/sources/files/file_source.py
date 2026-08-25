@@ -5,6 +5,7 @@ sources/ is a roadmap stub implementing the same interface.
 """
 from pathlib import Path
 from typing import Any
+
 import pandas as pd
 
 from marga.sources.base import SourceAdapter

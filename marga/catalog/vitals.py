@@ -61,7 +61,7 @@ def redundant_columns(catalog_entries: list[dict], dataframes: dict, overlap_thr
                         if not v1 or not v2:
                             continue
                         overlap = len(v1 & v2) / min(len(v1), len(v2))
-                    except Exception:
+                    except (KeyError, TypeError, ZeroDivisionError):
                         continue
                     if overlap > overlap_threshold:
                         flags.append({

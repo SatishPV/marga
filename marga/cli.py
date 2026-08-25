@@ -10,8 +10,8 @@ import argparse
 import json
 import sys
 
-from marga.catalog.profiler import build_catalog, load_file
 from marga.catalog import vitals as vitals_module
+from marga.catalog.profiler import build_catalog, load_file
 
 
 def cmd_scan(args):

@@ -6,9 +6,9 @@ log, so this could point at a real OpenLineage backend later with no rework.
 
 Each event answers: what job ran, what did it read, what did it produce, when.
 """
+import hashlib
 import json
 import uuid
-import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 

@@ -4,14 +4,15 @@ and a live SQL query endpoint (via DuckDB, no migration) over your data.
 
 Run: uvicorn marga.api.main:app --reload
 """
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from pathlib import Path
 
-from marga.catalog.profiler import build_catalog, load_file
 from marga.catalog import vitals as vitals_module
+from marga.catalog.profiler import build_catalog, load_file
 from marga.federation.sql_lens import query as sql_query
 
 app = FastAPI(title="Marga", description="No-migration data catalog and query layer")
