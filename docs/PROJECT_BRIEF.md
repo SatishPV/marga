@@ -7,6 +7,26 @@ viewable through different lenses (SQL, graph, NoSQL), without migrating
 (cutting) any of them.*
 
 
+## Positioning: Registry-style MDM
+
+Gartner defines four MDM implementation styles; **Registry** is the one
+Marga actually is: data stays in its source systems, a lightweight
+index/link layer tracks relationships across them, nothing is
+physically consolidated. This isn't a loose analogy — it's the
+established industry term for the no-migration principle (see ADR
+0002 in `docs/adr/` if that file exists, or the "no-migration"
+discussion in this doc's Problem section). Worth using this vocabulary
+in the README/pitch going forward instead of inventing our own terms
+for something the industry already names — it signals "we know the
+space," not "we didn't do the research."
+
+The other three MDM styles (Consolidation, Coexistence, and
+Centralized) all involve creating a physically merged golden-record
+store — explicitly NOT what Marga does, and shouldn't, per the
+no-migration principle. Naming this distinction is itself useful
+positioning: "Registry-style, not Consolidation-style" tells a
+technical reader exactly what Marga will and won't do to their data.
+
 ## Problem
 Mid-size teams have data scattered across many CSV/JSON files and
 databases — not one dataset, many, usually unrelated in name but related
@@ -81,3 +101,57 @@ point at multiple files (not necessarily related by name) → see
 relationships auto-detected across them, visualized as a diagram → run
 one SQL query that joins across sources → check lineage and vitals for
 the same sources.
+
+## Post-v1 milestone plan
+
+**Tomorrow (first half):** Catalog persistence — decide storage
+architecture deliberately (default SQLite for single-user/small-team
+deployments, Postgres as a connection-string swap for concurrent
+multi-user use, same interface either way — not two separate
+implementations). Adds descriptions, tags, ownership, and history,
+none of which exist today since the catalog is computed fresh on every
+scan. A simple completeness score per source (% of fields with a
+description/tag/owner filled in) is a cheap, high-value addition once
+this lands — same spirit as completeness/quality scoring in PIM tools
+like Sales Layer, adapted to data-catalog fields instead of product
+attributes.
+
+Each metadata edit (a description or tag being set or changed) records
+who made it and when — a minimal audit trail, not a full approval
+workflow. Inspired by Pimcore's MDM framing ("every field change
+traceable to its source and approver") and independently consistent
+with Gartner's "stewardship" mandatory feature — but scoped down to
+just the record itself (who/when), not a governance/approval system.
+Single-user mode (today's default) can record "cli-local-user" as the
+actor, same placeholder pattern already used in the security ADRs —
+this becomes meaningful once multi-user access exists, but costs
+nothing to log now.
+
+**Tomorrow (second half, if time allows — otherwise slips to
+Thursday):** New source adapters, in priority order: Google Sheets/
+Excel (likely a bigger real-world gap for our target user than any
+NoSQL source), generic SQL beyond Postgres, a data warehouse
+connector (Snowflake/BigQuery). Each follows the existing
+`SourceAdapter` plugin pattern — one file, `@register(...)`, a test.
+
+**Thursday:** Duplicate/relationship classification tiers — exact,
+near, and functional duplicate, using both value-overlap (already
+computed) and schema similarity (column name/type/shape matching, not
+yet computed) as two independent signals instead of one.
+
+Open question surfaced by the MDM positioning above, not yet
+scoped for a specific day: **survivorship rules** — once two sources
+are confirmed to hold the same entity (a "golden record" question),
+which value wins when they disagree? MDM tooling treats this as a
+first-class governance question (a stewardship workflow, not just
+detection). Marga only detects duplicates today; it has no opinion on
+which source should be trusted. Worth deciding deliberately later
+whether this belongs in Marga's Registry-style scope at all, or stays
+explicitly out — a Registry-style implementation traditionally leaves
+resolution to the human, which may be the right permanent answer here,
+not just a temporary gap.
+
+**Query panel wiring** (live sources queryable via SQL, not just
+visible in the catalog): scoped for whichever day has room after
+catalog persistence and duplicate tiering are both solid — don't rush
+either of those to fit this in.

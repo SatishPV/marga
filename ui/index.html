@@ -91,15 +91,27 @@ async function loadAll() {
 
 function renderCatalog(catalog) {
   const container = document.getElementById('catalogOut');
-  container.innerHTML = catalog.files.map(f => `
+  container.innerHTML = catalog.files.map(f => {
+    const m = f.metadata || {};
+    const completenessPct = Math.round((m.completeness || 0) * 100);
+    return `
     <div style="margin-bottom:1rem">
-      <div style="font-weight:600;margin-bottom:.4rem">${f.source.split('/').pop()} <span class="ts">(${f.row_count} rows)</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <div style="font-weight:600;margin-bottom:.2rem">${f.source.split('/').pop()} <span class="ts">(${f.row_count} rows)</span></div>
+        <span class="ts">${completenessPct}% documented</span>
+      </div>
+      <div class="ts" style="margin-bottom:.4rem">
+        ${m.description ? m.description : '<em>No description yet</em>'}
+        ${m.owner ? ` · owner: ${m.owner}` : ''}
+        ${m.tags && m.tags.length ? ' · ' + m.tags.map(t => `<span class="badge confidence">${t}</span>`).join(' ') : ''}
+        <button onclick="editDescription('${f.source}')" style="margin-left:.4rem;padding:.1rem .5rem;font-size:.75rem">edit</button>
+      </div>
       <table>
         <tr><th>column</th><th>type</th><th>null %</th><th>distinct</th></tr>
         ${f.columns.map(c => `<tr><td>${c.name}</td><td>${c.dtype}</td><td>${c.null_pct}%</td><td>${c.distinct_count}</td></tr>`).join('')}
       </table>
     </div>
-  `).join('') + (catalog.relationships.length ? `
+  `; }).join('') + (catalog.relationships.length ? `
     <div style="margin-top:1rem">
       <div style="font-weight:600;margin-bottom:.4rem">Detected relationships</div>
       <table>
@@ -108,6 +120,17 @@ function renderCatalog(catalog) {
       </table>
     </div>
   ` : '<div class="ts">No relationships detected across these sources.</div>');
+}
+
+async function editDescription(source) {
+  const description = prompt(`Description for ${source}:`);
+  if (description === null) return;
+  await fetch(`${API}/catalog/metadata?source=${encodeURIComponent(source)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'description', value: description, actor: 'web-ui-user' })
+  });
+  loadAll();
 }
 
 function renderVitals(vitals) {

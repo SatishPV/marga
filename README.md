@@ -67,6 +67,27 @@ needed).
 if a service isn't reachable, with the actual connection error shown in
 the skip reason if it fails).
 
+## Catalog persistence
+
+Descriptions, owners, and tags for each source now persist across
+scans (SQLite by default, `marga/catalog/catalog_store.db`, gitignored
+— local state, not committed). The catalog data itself is still
+computed fresh every scan; only human-supplied metadata is stored.
+Every change is recorded with who made it and when:
+
+```bash
+marga describe sample_data/customers.csv \
+  --description "Customer master list" --owner "data-team" \
+  --tag pii --tag core
+
+marga history sample_data/customers.csv
+```
+
+Or edit inline via the "edit" button next to any source in the web UI.
+A completeness score (% of description/owner/tags filled in) shows
+next to each source — a cheap first signal for "how well-documented is
+this part of the catalog."
+
 ## Quickstart
 
 ```bash
